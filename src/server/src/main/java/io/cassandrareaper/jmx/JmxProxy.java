@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
 import javax.management.AttributeNotFoundException;
 import javax.management.MBeanException;
 import javax.management.NotificationListener;
@@ -111,9 +112,10 @@ public interface JmxProxy extends AutoCloseable, NotificationListener {
   List<String> tokenRangeToEndpoint(String keyspace, RingRange tokenRange);
 
   /**
-   * Triggers a repair of range (beginToken, endToken] for given keyspace and column family. The repair is triggered by
-   * {@link org.apache.cassandra.service.StorageServiceMBean#forceRepairRangeAsync} For time being, we don't allow local
-   * nor snapshot repairs.
+   * Triggers a repair of range (beginToken, endToken] for given keyspace and column family. The
+   * repair is triggered by {@link
+   * org.apache.cassandra.service.StorageServiceMBean#forceRepairRangeAsync} For time being, we
+   * don't allow local nor snapshot repairs.
    *
    * @return Repair command number, or 0 if nothing to repair
    */
@@ -124,9 +126,13 @@ public interface JmxProxy extends AutoCloseable, NotificationListener {
       RepairParallelism repairParallelism,
       Collection<String> columnFamilies,
       boolean fullRepair,
-      Collection<String> datacenters) throws ReaperException;
+      Collection<String> datacenters,
+      RepairStatusHandler repairStatusHandler)
+      throws ReaperException;
 
   @Override
   void close();
+
+  void removeRepairStatusHandler(int commandId);
 
 }

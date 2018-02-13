@@ -24,19 +24,21 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 
 import com.codahale.metrics.MetricRegistry;
 import com.datastax.driver.core.policies.EC2MultiRegionAddressTranslator;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class JmxConnectionFactory {
 
   private static final Logger LOG = LoggerFactory.getLogger(JmxConnectionFactory.class);
-
+  private static final ConcurrentMap<String, JmxProxy> JMX_CONNECTIONS = Maps.newConcurrentMap();
   private final MetricRegistry metricRegistry;
   private final HostConnectionCounters hostConnectionCounters;
   private Map<String, Integer> jmxPorts;
@@ -68,9 +70,27 @@ public class JmxConnectionFactory {
       password = jmxAuth.getPassword();
     }
     try {
+      if (JMX_CONNECTIONS.containsKey(host) && JMX_CONNECTIONS.get(host).isConnectionAlive()) {
+        return JMX_CONNECTIONS.get(host);
+      }
+
       JmxProxy jmxProxy = JmxProxyImpl.connect(handler, host, username, password, addressTranslator, connectionTimeout);
       hostConnectionCounters.incrementSuccessfulConnections(host);
-      return jmxProxy;
+      JmxProxy previousConnection = JMX_CONNECTIONS.putIfAbsent(host, jmxProxy);
+      if (previousConnection == null) {
+        // The putIfAbsent succeeded and our JmxProxy object is the one in the map
+        LOG.info("Adding new JMX Proxy for host {}", host);
+
+      } else {
+        if (previousConnection.isConnectionAlive()) {
+          LOG.info("Reusing previously created JMX connection for host {}", host);
+          jmxProxy.close();
+        } else {
+          LOG.info("Recreating JMX connection for host {}", host);
+          JMX_CONNECTIONS.put(host, jmxProxy);
+        }
+      }
+      return JMX_CONNECTIONS.get(host);
     } catch (ReaperException | RuntimeException e) {
       hostConnectionCounters.decrementSuccessfulConnections(host);
       throw e;

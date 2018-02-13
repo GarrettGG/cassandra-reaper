@@ -276,14 +276,16 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
                     .build();
             context.storage.updateRepairSegment(segment);
 
-            commandId = coordinator.triggerRepair(
-                segment.getStartToken(),
-                segment.getEndToken(),
-                keyspace,
-                validationParallelism,
-                tablesToRepair,
-                fullRepair,
-                repairUnit.getDatacenters());
+            commandId =
+                coordinator.triggerRepair(
+                    segment.getStartToken(),
+                    segment.getEndToken(),
+                    keyspace,
+                    validationParallelism,
+                    tablesToRepair,
+                    fullRepair,
+                    repairUnit.getDatacenters(),
+                    this);
 
             if (0 != commandId) {
               processTriggeredSegment(segment, coordinator);
@@ -683,7 +685,8 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
       int repairNumber,
       Optional<ActiveRepairService.Status> status,
       Optional<ProgressEventType> progress,
-      String message) {
+      String message,
+      JmxProxy jmxProxy) {
 
     final RepairSegment segment = context.storage.getRepairSegment(repairRunner.getRepairRunId(), segmentId).get();
     Thread.currentThread().setName(clusterName + ":" + segment.getRunId() + ":" + segmentId);
@@ -710,15 +713,14 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
             currentSegment,
             repairNumber,
             failOutsideSynchronizedBlock,
-            progress);
+            progress,
+            jmxProxy);
       }
       // New repair API – Cassandra-2.2 onwards
       if (progress.isPresent()) {
-        failOutsideSynchronizedBlock = handleJmxNotificationForCassandra22(
-            progress,
-            currentSegment,
-            repairNumber,
-            failOutsideSynchronizedBlock);
+        failOutsideSynchronizedBlock =
+            handleJmxNotificationForCassandra22(
+                progress, currentSegment, repairNumber, failOutsideSynchronizedBlock, jmxProxy);
       }
     }
 
@@ -742,7 +744,8 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
       Optional<ProgressEventType> progress,
       RepairSegment currentSegment,
       int repairNumber,
-      boolean failOutsideSynchronizedBlock) {
+      boolean failOutsideSynchronizedBlock,
+      JmxProxy jmxProxy) {
 
     switch (progress.get()) {
       case START:
@@ -794,7 +797,10 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
 
       case ERROR:
       case ABORT:
-        LOG.warn("repair session failed for segment with id '{}' and repair number '{}'", segmentId, repairNumber);
+        LOG.warn(
+            "repair session failed for segment with id '{}' and repair number '{}'",
+            segmentId,
+            repairNumber);
         failOutsideSynchronizedBlock = true;
         break;
 
@@ -802,8 +808,11 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
         // This gets called through the JMX proxy at the end
         // regardless of succeeded or failed sessions.
         LOG.debug(
-            "repair session finished for segment with id '{}' and repair number '{}'", segmentId, repairNumber);
+            "repair session finished for segment with id '{}' and repair number '{}'",
+            segmentId,
+            repairNumber);
         condition.signalAll();
+        jmxProxy.removeRepairStatusHandler(repairNumber);
         break;
       default:
         LOG.debug(
@@ -820,7 +829,8 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
       RepairSegment currentSegment,
       int repairNumber,
       boolean failOutsideSynchronizedBlock,
-      Optional<ProgressEventType> progress) {
+      Optional<ProgressEventType> progress,
+      JmxProxy jmxProxy) {
 
     switch (status.get()) {
       case STARTED:
@@ -884,6 +894,7 @@ final class SegmentRunner implements RepairStatusHandler, Runnable {
             segmentId,
             repairNumber);
         condition.signalAll();
+        jmxProxy.removeRepairStatusHandler(repairNumber);
         break;
       default:
         LOG.debug(
